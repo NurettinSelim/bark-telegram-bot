@@ -1,0 +1,7 @@
+start - Start to use bot
+save_public_key - Save your public key
+remove_public_key - Remove your public key
+get_public_key - Get your public key
+total_volume - Get total volume
+latest_volumes - Get latest volumes
+balances - Get balances of your wallet
