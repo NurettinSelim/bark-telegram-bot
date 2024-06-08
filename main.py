@@ -29,6 +29,10 @@ except Exception as e:
     print(f"Error connecting to MongoDB: {e}")
 
 
+def hide_wallet_address(address: str) -> str:
+    return f"{address[:4]}...{address[-4:]}"
+
+
 async def hello(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f'Hello {update.effective_user.first_name}')
 
@@ -60,7 +64,7 @@ async def public_key_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def get_public_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     public_key = mongo_client.bark.public_keys.find_one({"user_id": update.effective_user.id})
     if public_key:
-        await update.message.reply_text(f"Your public key is: {public_key['public_key']}")
+        await update.message.reply_text(f"Your public key is: {hide_wallet_address(public_key['public_key'])}")
     else:
         await update.message.reply_text("You have not saved your public key yet. Please save it with /save_public_key.")
 
@@ -120,13 +124,13 @@ async def get_balances(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         fetching_message = await update.message.reply_text("Please wait while I fetch your balances.")
         result = dune_client.run_query(query=query, performance='medium')
 
-        messages = f"Balances for your wallet address ({user_public_key['public_key']}):"
+        messages = f"Balances for your wallet address ({hide_wallet_address(user_public_key['public_key'])}):"
         messages += f"\nToken Symbol : Token Balance : Total Token Value(USD)"
         for row in result.result.rows:
             if row['token_value']:
                 messages += f"\n{row['token_symbol']} : {float(row['token_balance']):.3f} : {row['token_value']:.3f}"
             else:
-                messages += f"\n{row['token_symbol']} : {float(row['token_balance'])::.3f} : N/A"
+                messages += f"\n{row['token_symbol']} : {float(row['token_balance']):.3f} : N/A"
 
         await fetching_message.delete()
         await update.message.reply_text(messages)
@@ -162,7 +166,7 @@ async def get_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         plt.figure(figsize=(10, 5))
         plt.plot(dates, pnl_values, marker='o', linestyle='-', color='b')
-        plt.title(f"PNL for Wallet {user_public_key['public_key']}")
+        plt.title(f"PNL for Wallet {hide_wallet_address(user_public_key['public_key'])}")
         plt.xlabel('Date')
         plt.ylabel('PNL (USD)')
         plt.grid(True)
@@ -175,6 +179,138 @@ async def get_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_photo(photo=buf)
     except Exception as e:
         await update.message.reply_text(f"Error generating PNL graph: {e}")
+
+
+async def get_wallet_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_public_key = mongo_client.bark.public_keys.find_one({"user_id": update.effective_user.id})
+    if not user_public_key:
+        await update.message.reply_text("You have not saved your public key yet. Please save it with /save_public_key.")
+        return
+
+    query = QueryBase(
+        name="Wallet Summary Query",
+        query_id=3808011,  # Example query_id, replace with your actual query_id
+        params=[
+            QueryParameter(
+                name="Solana Wallet Address",
+                value=user_public_key["public_key"],
+                parameter_type=ParameterType.TEXT
+            ),
+        ]
+    )
+
+    try:
+        result = dune_client.run_query(query=query, performance='medium')
+        summary_data = result.result.rows
+
+        total_value_sol = summary_data[0]['total_value_sol']
+        total_value_usd = summary_data[0]['total_value_usd']
+        change_24h_usd = summary_data[0]['change_24h_usd']
+        change_24h_percent = summary_data[0]['change_24h_percent']
+
+        change_color = 'green' if change_24h_usd >= 0 else 'red'
+        change_24h_usd = f"<b><i>{change_24h_usd:.2f}</i></b>" if change_color == 'green' else f"<b><i>{change_24h_usd:.2f}</i></b>"
+        change_24h_percent = f"<b><i>{change_24h_percent:.2f}%</i></b>" if change_color == 'green' else f"<b><i>{change_24h_percent:.2f}%</i></b>"
+
+        message = (
+            f"Wallet Summary for {hide_wallet_address(user_public_key['public_key'])}:\n"
+            f"Total Value: {total_value_sol:.2f} SOL / ${total_value_usd:.2f}\n"
+            f"24h Change: {change_24h_usd} ({change_24h_percent})"
+        )
+
+        await update.message.reply_text(message, parse_mode='HTML')
+    except Exception as e:
+        await update.message.reply_text(f"Error fetching wallet summary: {e}")
+
+
+async def get_allocation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generate and send an allocation pie chart."""
+    user_public_key = mongo_client.bark.public_keys.find_one({"user_id": update.effective_user.id})
+    if not user_public_key:
+        await update.message.reply_text("You have not saved your public key yet. Please save it with /save_public_key.")
+        return
+
+    query = QueryBase(
+        name="Allocation Query",
+        query_id=3808012,  # Example query_id, replace with your actual query_id
+        params=[
+            QueryParameter(
+                name="Solana Wallet Address",
+                value=user_public_key["public_key"],
+                parameter_type=ParameterType.TEXT
+            ),
+        ]
+    )
+
+    try:
+        result = dune_client.run_query(query=query, performance='medium')
+        allocation_data = result.result.rows
+
+        tokens = [row['token_symbol'] for row in allocation_data]
+        values = [float(row['token_value']) for row in allocation_data]
+
+        plt.figure(figsize=(8, 8))
+        plt.pie(values, labels=tokens, autopct='%1.1f%%', startangle=140)
+        plt.title(f"Token Allocation for {hide_wallet_address(user_public_key['public_key'])}")
+        plt.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
+
+        buf = BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close()
+
+        await update.message.reply_photo(photo=buf)
+    except Exception as e:
+        await update.message.reply_text(f"Error generating allocation pie chart: {e}")
+
+
+async def get_pnl_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Get detailed P&L for each token."""
+    user_public_key = mongo_client.bark.public_keys.find_one({"user_id": update.effective_user.id})
+    if not user_public_key:
+        await update.message.reply_text("You have not saved your public key yet. Please save it with /save_public_key.")
+        return
+
+    query = QueryBase(
+        name="P&L Details Query",
+        query_id=3808013,  # Example query_id, replace with your actual query_id
+        params=[
+            QueryParameter(
+                name="Solana Wallet Address",
+                value=user_public_key["public_key"],
+                parameter_type=ParameterType.TEXT
+            ),
+        ]
+    )
+
+    try:
+        result = dune_client.run_query(query=query, performance='medium')
+        pnl_data = result.result.rows
+
+        message = "P&L Details for your wallet:\n"
+        for row in pnl_data:
+            token_logo = row['token_logo']
+            token_ticker = row['token_ticker']
+            token_name = row['token_name']
+            price = float(row['price'])
+            cost = float(row['cost'])
+            holding = float(row['holding'])
+            pnl = (price - cost) * holding
+
+            pnl_color = 'green' if pnl >= 0 else 'red'
+            pnl_formatted = f"<b><i>{pnl:.2f}</i></b>" if pnl_color == 'green' else f"<b><i>{pnl:.2f}</i></b>"
+
+            message += (
+                f"\n{token_logo} {token_ticker} ({token_name})"
+                f"\nPrice: ${price:.2f}"
+                f"\nCost: ${cost:.2f}"
+                f"\nHolding: {holding:.2f}"
+                f"\nP&L: {pnl_formatted}\n"
+            )
+
+        await update.message.reply_text(message, parse_mode='HTML')
+    except Exception as e:
+        await update.message.reply_text(f"Error fetching P&L details: {e}")
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -218,6 +354,9 @@ def main() -> None:
     application.add_handler(CommandHandler("balances", get_balances))
     application.add_handler(CommandHandler("hello", hello))
     application.add_handler(CommandHandler("pnl", get_pnl))
+    application.add_handler(CommandHandler("wallet_summary", get_wallet_summary))
+    application.add_handler(CommandHandler("allocation", get_allocation))
+    application.add_handler(CommandHandler("pnl_details", get_pnl_details))
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
