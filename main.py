@@ -5,6 +5,8 @@ from typing import Optional
 import dotenv
 import matplotlib.pyplot as plt
 import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib import rcParams
 from dune_client.client import DuneClient
 from dune_client.query import QueryBase
 from dune_client.types import QueryParameter, ParameterType
@@ -168,15 +170,6 @@ async def get_balances(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(f"Error fetching balances: {e}")
 
 
-import matplotlib.pyplot as plt
-from matplotlib import rcParams
-
-# Set a different font
-rcParams['font.family'] = 'Arial'
-
-import matplotlib.pyplot as plt
-from matplotlib import rcParams
-
 # Set a different font
 rcParams['font.family'] = 'Arial'
 
@@ -210,8 +203,18 @@ async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     # Convert results to DataFrame
     df = pd.DataFrame(rows)
+
+    # Inspect the columns to see what is available
+    print("Available columns:", df.columns)
+
+    # Assuming the correct column name might be different, inspect and modify as needed
+    block_time_column = 'block_time'  # Adjust this based on the actual column name
+    if block_time_column not in df.columns:
+        await update.message.reply_text(f"Error: Expected column '{block_time_column}' not found in the data.")
+        return
+
+    df[block_time_column] = pd.to_datetime(df[block_time_column])
     df['pnl_usd'] = df['pnl_usd'].astype(float)
-    df['block_time'] = pd.to_datetime(df['block_time'])
 
     # Plot PnL Bar Chart
     plt.figure(figsize=(10, 6))
@@ -244,12 +247,12 @@ async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     plt.close()
 
     # Calculate and plot Total Portfolio PnL vs Time Line Graph
-    df_total_pnl = df[['block_time', 'pnl_usd']].copy()
-    df_total_pnl.sort_values('block_time', inplace=True)
+    df_total_pnl = df[[block_time_column, 'pnl_usd']].copy()
+    df_total_pnl.sort_values(block_time_column, inplace=True)
     df_total_pnl['cumulative_pnl_usd'] = df_total_pnl['pnl_usd'].cumsum()
 
     plt.figure(figsize=(10, 6))
-    plt.plot(df_total_pnl['block_time'], df_total_pnl['cumulative_pnl_usd'], marker='o', linestyle='-', color='green')
+    plt.plot(df_total_pnl[block_time_column], df_total_pnl['cumulative_pnl_usd'], marker='o', linestyle='-', color='green')
     plt.xlabel('Time')
     plt.ylabel('Cumulative PnL (USD)')
     plt.title('Total Portfolio PnL Over Time')
