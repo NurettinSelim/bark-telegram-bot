@@ -127,18 +127,23 @@ async def get_balances(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         balances_data = result.result.rows
 
         # Create a pie chart
-        import matplotlib.pyplot as plt
-
         tokens = [row['token_symbol'][:6] for row in balances_data]  # truncate token symbols to 6 characters
         token_values = [float(row['token_value']) for row in balances_data if row['token_value'] is not None]
 
-        for row in balances_data:
-            token_value = row['token_value']
-            if token_value is not None:
-                print(f"Token value: {token_value}")
+        plt.figure(figsize=(10, 6))  # Increase the figure size
+        wedges, texts, autotexts = plt.pie(
+            token_values,
+            labels=[f"{token} (${value:.2f})" for token, value in zip(tokens, token_values)],
+            autopct='%1.1f%%',
+            startangle=140
+        )
 
-        plt.pie(token_values, labels=[f"{token} (${value:.2f})" for token, value in zip(tokens, token_values)], autopct='%1.1f%%')
+        # Improve text positioning
+        for text in texts + autotexts:
+            text.set_fontsize(10)
+
         plt.title('Token Balances')
+        plt.tight_layout()
 
         buf = BytesIO()
         plt.savefig(buf, format='png')
@@ -150,10 +155,10 @@ async def get_balances(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         # Send the text message
         messages = f"Balances for your wallet address ({hide_wallet_address(user_public_key['public_key'])}):"
-        messages += f"\nToken Symbol : Token Balance : Total Token Value(USD)"
+        messages += f"\nToken Symbol : Token Balance : Total Token Value (USD)"
         for row in balances_data:
             if row['token_value']:
-                messages += f"\n{row['token_symbol']} : {float(row['token_balance']):.3f} : {row['token_value']:.3f}"
+                messages += f"\n{row['token_symbol']} : {float(row['token_balance']):.3f} : ${row['token_value']:.2f}"
             else:
                 messages += f"\n{row['token_symbol']} : {float(row['token_balance']):.3f} : N/A"
 
@@ -161,6 +166,7 @@ async def get_balances(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(messages)
     except Exception as e:
         await update.message.reply_text(f"Error fetching balances: {e}")
+
 
 async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_public_key = mongo_client.bark.public_keys.find_one({"user_id": update.effective_user.id})
