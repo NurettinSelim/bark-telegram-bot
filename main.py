@@ -230,9 +230,28 @@ async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     bio_line.seek(0)
     plt.close()
 
+    # Calculate and plot Total Portfolio PnL Line Graph
+    df_total_pnl = df[['token', 'pnl_usd']].copy()
+    df_total_pnl['cumulative_pnl_usd'] = df_total_pnl['pnl_usd'].cumsum()
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(df_total_pnl['token'], df_total_pnl['cumulative_pnl_usd'], marker='o', linestyle='-', color='green')
+    plt.xlabel('Token')
+    plt.ylabel('Cumulative PnL (USD)')
+    plt.title('Total Portfolio PnL Over Time')
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+
+    # Save total portfolio PnL line graph to a BytesIO object
+    bio_total_pnl = BytesIO()
+    plt.savefig(bio_total_pnl, format='png')
+    bio_total_pnl.seek(0)
+    plt.close()
+
     # Send the plots to the user
     await update.message.reply_photo(photo=bio_bar, caption="PnL for each Token (Bar Chart)")
     await update.message.reply_photo(photo=bio_line, caption="PnL for each Token (Line Graph)")
+    await update.message.reply_photo(photo=bio_total_pnl, caption="Total Portfolio PnL Over Time (Line Graph)")
 
 
 
