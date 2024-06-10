@@ -168,6 +168,12 @@ async def get_balances(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(f"Error fetching balances: {e}")
 
 
+import matplotlib.pyplot as plt
+from matplotlib import rcParams
+
+# Set a different font
+rcParams['font.family'] = 'Arial'
+
 async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_public_key = mongo_client.bark.public_keys.find_one({"user_id": update.effective_user.id})
     if not user_public_key:
@@ -252,7 +258,6 @@ async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_photo(photo=bio_bar, caption="PnL for each Token (Bar Chart)")
     await update.message.reply_photo(photo=bio_line, caption="PnL for each Token (Line Graph)")
     await update.message.reply_photo(photo=bio_total_pnl, caption="Total Portfolio PnL Over Time (Line Graph)")
-
 
 
 def main() -> None:
