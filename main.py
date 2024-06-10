@@ -270,6 +270,128 @@ async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_photo(photo=bio_line, caption="PnL for each Token (Line Graph)")
     await update.message.reply_photo(photo=bio_total_pnl, caption="Total Portfolio PnL Over Time (Line Graph)")
 
+async def get_total_portfolio_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_public_key = mongo_client.bark.public_keys.find_one({"user_id": update.effective_user.id})
+    if not user_public_key:
+        await update.message.reply_text("You have not saved your public key yet. Please save it with /save_public_key.")
+        return
+
+    query_text = """
+    SELECT
+        block_time,
+        SUM(pnl_usd) AS Total_PnL
+    FROM
+        (WITH trade_data AS (
+        SELECT
+            user,
+            block_time,
+            token_bought_symbol,
+            amount_usd,
+            token_bought_amount,
+            token_sold_symbol,
+            token_sold_amount,
+            tx_id
+        FROM
+            bonkbot_solana.bot_trades
+        WHERE
+            user = '{{Solana Wallet Address}}'
+            AND is_last_trade_in_transaction = true
+        ORDER BY
+            block_time DESC
+    ),
+
+    -- Calculate the total amount bought for each token
+    token_bought AS (
+        SELECT
+            token_bought_symbol AS token,
+            SUM(amount_usd) AS total_bought_usd
+        FROM
+            trade_data
+        GROUP BY
+            token_bought_symbol
+    ),
+
+    -- Calculate the total amount sold for each token
+    token_sold AS (
+        SELECT
+            token_sold_symbol AS token,
+            SUM(amount_usd) AS total_sold_usd
+        FROM
+            trade_data
+        GROUP BY
+            token_sold_symbol
+    )
+
+    -- Calculate PnL for each token
+    SELECT
+        trade_data.block_time,
+        COALESCE(ts.total_sold_usd, 0) - COALESCE(tb.total_bought_usd, 0) AS pnl_usd
+    FROM
+        trade_data
+    LEFT JOIN
+        token_bought tb
+    ON
+        trade_data.token_bought_symbol = tb.token
+    LEFT JOIN
+        token_sold ts
+    ON
+        trade_data.token_sold_symbol = ts.token
+    WHERE
+        trade_data.token_bought_symbol NOT IN ('USDC', 'SOL', 'USDT') OR trade_data.token_sold_symbol NOT IN ('USDC', 'SOL', 'USDT')
+    ) pnl_data
+    GROUP BY block_time
+    ORDER BY block_time
+    """
+
+    query = QueryBase(
+        name="Total Portfolio PnL Query",
+        query_id=3815570,  # Replace with your actual query ID
+        query_text=query_text,
+        params=[
+            QueryParameter(
+                name="Solana Wallet Address",
+                value=user_public_key["public_key"],
+                parameter_type=ParameterType.TEXT
+            ),
+        ]
+    )
+
+    try:
+        result = dune_client.run_query(query=query, performance='medium')
+        rows = result.result.rows
+        if not rows:
+            await update.message.reply_text("No PnL data available.")
+            return
+    except Exception as e:
+        await update.message.reply_text(f"Error fetching total portfolio PnL data: {e}")
+        return
+
+    # Convert results to DataFrame
+    df = pd.DataFrame(rows)
+    df['Total_PnL'] = df['Total_PnL'].astype(float)
+    df['block_time'] = pd.to_datetime(df['block_time'])
+
+    # Calculate cumulative PnL
+    df.sort_values('block_time', inplace=True)
+    df['cumulative_pnl_usd'] = df['Total_PnL'].cumsum()
+
+    # Plot Total Portfolio PnL vs Time Line Graph
+    plt.figure(figsize=(10, 6))
+    plt.plot(df['block_time'], df['cumulative_pnl_usd'], marker='o', linestyle='-', color='green')
+    plt.xlabel('Time')
+    plt.ylabel('Cumulative PnL (USD)')
+    plt.title('Total Portfolio PnL Over Time')
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+
+    # Save total portfolio PnL line graph to a BytesIO object
+    bio_total_pnl = BytesIO()
+    plt.savefig(bio_total_pnl, format='png')
+    bio_total_pnl.seek(0)
+    plt.close()
+
+    # Send the plot to the user
+    await update.message.reply_photo(photo=bio_total_pnl, caption="Total Portfolio PnL Over Time (Line Graph)")
 
 def main() -> None:
     application = Application.builder().token(os.getenv("TG_TOKEN")).build()
@@ -306,6 +428,8 @@ def main() -> None:
     application.add_handler(CommandHandler("latest_volumes", get_latest_volumes))
     application.add_handler(CommandHandler("balances", get_balances))
     application.add_handler(CommandHandler("pnl_graph", get_pnl_graph))  # Add this line
+    application.add_handler(CommandHandler("total_portfolio_pnl_graph", get_total_portfolio_pnl_graph))  # Add this line
+
     application.add_handler(CommandHandler("hello", hello))
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
