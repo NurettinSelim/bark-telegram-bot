@@ -200,7 +200,7 @@ async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     df = pd.DataFrame(rows)
     df['pnl_usd'] = df['pnl_usd'].astype(float)
 
-    # Plot PnL
+    # Plot PnL Bar Chart
     plt.figure(figsize=(10, 6))
     plt.bar(df['token'], df['pnl_usd'], color='blue')
     plt.xlabel('Token')
@@ -209,18 +209,31 @@ async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     plt.xticks(rotation=45)
     plt.tight_layout()
 
-    # Save plot to a BytesIO object
-    bio = BytesIO()
-    plt.savefig(bio, format='png')
-    bio.seek(0)
+    # Save bar chart to a BytesIO object
+    bio_bar = BytesIO()
+    plt.savefig(bio_bar, format='png')
+    bio_bar.seek(0)
     plt.close()
 
-    # Send the plot to the user
-    await update.message.reply_photo(photo=bio, caption="PnL for each Token")
+    # Plot PnL Line Graph
+    plt.figure(figsize=(10, 6))
+    plt.plot(df['token'], df['pnl_usd'], marker='o', linestyle='-', color='blue')
+    plt.xlabel('Token')
+    plt.ylabel('PnL (USD)')
+    plt.title('PnL for each Token')
+    plt.xticks(rotation=45)
+    plt.tight_layout()
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Action cancelled.")
-    return ConversationHandler.END
+    # Save line graph to a BytesIO object
+    bio_line = BytesIO()
+    plt.savefig(bio_line, format='png')
+    bio_line.seek(0)
+    plt.close()
+
+    # Send the plots to the user
+    await update.message.reply_photo(photo=bio_bar, caption="PnL for each Token (Bar Chart)")
+    await update.message.reply_photo(photo=bio_line, caption="PnL for each Token (Line Graph)")
+
 
 
 def main() -> None:
