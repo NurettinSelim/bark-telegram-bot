@@ -174,6 +174,12 @@ from matplotlib import rcParams
 # Set a different font
 rcParams['font.family'] = 'Arial'
 
+import matplotlib.pyplot as plt
+from matplotlib import rcParams
+
+# Set a different font
+rcParams['font.family'] = 'Arial'
+
 async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_public_key = mongo_client.bark.public_keys.find_one({"user_id": update.effective_user.id})
     if not user_public_key:
@@ -205,6 +211,7 @@ async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # Convert results to DataFrame
     df = pd.DataFrame(rows)
     df['pnl_usd'] = df['pnl_usd'].astype(float)
+    df['block_time'] = pd.to_datetime(df['block_time'])
 
     # Plot PnL Bar Chart
     plt.figure(figsize=(10, 6))
@@ -236,13 +243,14 @@ async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     bio_line.seek(0)
     plt.close()
 
-    # Calculate and plot Total Portfolio PnL Line Graph
-    df_total_pnl = df[['token', 'pnl_usd']].copy()
+    # Calculate and plot Total Portfolio PnL vs Time Line Graph
+    df_total_pnl = df[['block_time', 'pnl_usd']].copy()
+    df_total_pnl.sort_values('block_time', inplace=True)
     df_total_pnl['cumulative_pnl_usd'] = df_total_pnl['pnl_usd'].cumsum()
 
     plt.figure(figsize=(10, 6))
-    plt.plot(df_total_pnl['token'], df_total_pnl['cumulative_pnl_usd'], marker='o', linestyle='-', color='green')
-    plt.xlabel('Token')
+    plt.plot(df_total_pnl['block_time'], df_total_pnl['cumulative_pnl_usd'], marker='o', linestyle='-', color='green')
+    plt.xlabel('Time')
     plt.ylabel('Cumulative PnL (USD)')
     plt.title('Total Portfolio PnL Over Time')
     plt.xticks(rotation=45)
