@@ -308,6 +308,10 @@ async def get_total_portfolio_pnl_graph(update: Update, context: ContextTypes.DE
     # Send the plot to the user
     await update.message.reply_photo(photo=bio_total_pnl, caption="Total Portfolio PnL Over Time (Line Graph)")
 
+def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    update.message.reply_text("Cancelled.")
+    return ConversationHandler.END
+
 def main() -> None:
     application = Application.builder().token(os.getenv("TG_TOKEN")).build()
 
