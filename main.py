@@ -10,8 +10,9 @@ from dune_client.query import QueryBase
 from dune_client.types import QueryParameter, ParameterType
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
-from telegram import Update
-from telegram.ext import CommandHandler, ContextTypes, MessageHandler, ConversationHandler, Application, filters
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import CommandHandler, ContextTypes, MessageHandler, ConversationHandler, Application, filters, CallbackQueryHandler
+from telegram.constants import ParseMode
 
 # Load the environment variables
 dotenv.load_dotenv(".env")
@@ -29,14 +30,11 @@ try:
 except Exception as e:
     print(f"Error connecting to MongoDB: {e}")
 
-
 def hide_wallet_address(address: str) -> str:
     return f"{address[:4]}...{address[-4:]}"
 
-
 async def hello(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f'Hello {update.effective_user.first_name}')
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
@@ -45,48 +43,87 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
     return 0
 
-
 async def save_public_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Please enter your public wallet key now.")
     return 0
-
 
 async def public_key_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         mongo_client.bark.public_keys.insert_one(
             {"user_id": update.effective_user.id, "public_key": update.message.text}
         )
-        await update.message.reply_text("Thank you! Your public key has been stored.")
+        keyboard = [
+            [
+                InlineKeyboardButton("Get Public Key", callback_data='get_public_key'),
+                InlineKeyboardButton("Remove Public Key", callback_data='remove_public_key'),
+            ],
+            [
+                InlineKeyboardButton("Total Volume", callback_data='total_volume'),
+                InlineKeyboardButton("Latest Volumes", callback_data='latest_volumes'),
+            ],
+            [
+                InlineKeyboardButton("Balances", callback_data='balances'),
+                InlineKeyboardButton("PnL Graph", callback_data='pnl_graph'),
+            ],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("Thank you! Your public key has been stored. Choose an option:", reply_markup=reply_markup)
     except Exception as e:
         await update.message.reply_text(f"Error storing your public key: {e}")
     return ConversationHandler.END
 
+async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    keyboard = [
+        [
+            InlineKeyboardButton("Get Public Key", callback_data='get_public_key'),
+            InlineKeyboardButton("Remove Public Key", callback_data='remove_public_key'),
+        ],
+        [
+            InlineKeyboardButton("Total Volume", callback_data='total_volume'),
+            InlineKeyboardButton("Latest Volumes", callback_data='latest_volumes'),
+        ],
+        [
+            InlineKeyboardButton("Balances", callback_data='balances'),
+            InlineKeyboardButton("PnL Graph", callback_data='pnl_graph'),
+        ],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    query = update.callback_query
+    await query.message.reply_text("Choose an option:", reply_markup=reply_markup)
 
 async def get_public_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    public_key = mongo_client.bark.public_keys.find_one({"user_id": update.effective_user.id})
+    query = update.callback_query
+    await query.answer()
+    public_key = mongo_client.bark.public_keys.find_one({"user_id": query.from_user.id})
     if public_key:
-        await update.message.reply_text(f"Your public key is: {hide_wallet_address(public_key['public_key'])}")
+        await query.edit_message_text(f"Your public key is: {hide_wallet_address(public_key['public_key'])}")
     else:
-        await update.message.reply_text("You have not saved your public key yet. Please save it with /save_public_key.")
-
+        await query.edit_message_text("You have not saved your public key yet. Please save it with /save_public_key.")
+    await show_menu(update, context)
 
 async def remove_public_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
     try:
-        mongo_client.bark.public_keys.delete_many({"user_id": update.effective_user.id})
-        await update.message.reply_text("Your public key has been removed.")
+        mongo_client.bark.public_keys.delete_many({"user_id": query.from_user.id})
+        await query.edit_message_text("Your public key has been removed.")
     except Exception as e:
-        await update.message.reply_text(f"Error removing your public key: {e}")
-
+        await query.edit_message_text(f"Error removing your public key: {e}")
+    await show_menu(update, context)
 
 async def get_total_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
     try:
         total_volume = dune_client.get_latest_result(3777885).result.rows[0]["Volume"]
-        await update.message.reply_text(f"The total volume of Bonk is: {total_volume:.3f}")
+        await query.edit_message_text(f"The total volume of Bonk is: {total_volume:.3f}")
     except Exception as e:
-        await update.message.reply_text(f"Error fetching total volume: {e}")
-
+        await query.edit_message_text(f"Error fetching total volume: {e}")
+    await show_menu(update, context)
 
 async def get_latest_volumes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
     try:
         query_result = dune_client.get_latest_result(3777907)
         sorted_result = sorted(query_result.result.rows, key=lambda x: x['Time'], reverse=True)
@@ -98,18 +135,20 @@ async def get_latest_volumes(update: Update, context: ContextTypes.DEFAULT_TYPE)
         for result in sorted_latest_results:
             message += f"\n{result['token_bought_symbol']} : {result['Volume']:.3f}"
 
-        await update.message.reply_text(message)
+        await query.edit_message_text(message)
     except Exception as e:
-        await update.message.reply_text(f"Error fetching latest volumes: {e}")
-
+        await query.edit_message_text(f"Error fetching latest volumes: {e}")
+    await show_menu(update, context)
 
 async def get_balances(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_public_key = mongo_client.bark.public_keys.find_one({"user_id": update.effective_user.id})
+    query = update.callback_query
+    await query.answer()
+    user_public_key = mongo_client.bark.public_keys.find_one({"user_id": query.from_user.id})
     if not user_public_key:
-        await update.message.reply_text("You have not saved your public key yet. Please save it with /save_public_key.")
+        await query.edit_message_text("You have not saved your public key yet. Please save it with /save_public_key.")
         return
 
-    query = QueryBase(
+    balances_query = QueryBase(
         name="Balances Query",
         query_id=3808006,
         params=[
@@ -121,10 +160,47 @@ async def get_balances(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         ]
     )
 
+    total_portfolio_usd_query = QueryBase(
+        name="Total Portfolio USD Query",
+        query_id=3808045,
+        params=[
+            QueryParameter(
+                name="Solana Wallet Address",
+                value=user_public_key["public_key"],
+                parameter_type=ParameterType.TEXT
+            ),
+        ]
+    )
+
+    total_portfolio_sol_query = QueryBase(
+        name="Total Portfolio SOL Query",
+        query_id=3815789,
+        params=[
+            QueryParameter(
+                name="Solana Wallet Address",
+                value=user_public_key["public_key"],
+                parameter_type=ParameterType.TEXT
+            ),
+        ]
+    )
+
     try:
-        fetching_message = await update.message.reply_text("Please wait while I fetch your balances.")
-        result = dune_client.run_query(query=query, performance='medium')
-        balances_data = result.result.rows
+        fetching_message = await query.edit_message_text("Please wait while I fetch your balances.")
+        
+        # Run all queries concurrently
+        balances_result = dune_client.run_query(query=balances_query, performance='medium')
+        total_usd_result = dune_client.run_query(query=total_portfolio_usd_query, performance='medium')
+        total_sol_result = dune_client.run_query(query=total_portfolio_sol_query, performance='medium')
+
+        # Debug: Print the results to check the returned structure
+        print("Balances Result:", balances_result.result.rows)
+        print("Total USD Result:", total_usd_result.result.rows)
+        print("Total SOL Result:", total_sol_result.result.rows)
+
+        balances_data = balances_result.result.rows
+
+        # Sort balances data by token value in USD
+        balances_data = sorted(balances_data, key=lambda x: float(x['token_value'] or 0), reverse=True)
 
         # Create a pie chart
         tokens = [row['token_symbol'][:6] for row in balances_data]  # truncate token symbols to 6 characters
@@ -151,38 +227,52 @@ async def get_balances(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         plt.close()
 
         # Send the pie chart
-        await update.message.reply_photo(photo=buf)
+        await context.bot.send_photo(chat_id=query.message.chat_id, photo=buf)
 
-        # Send the text message
+        # Prepare the message
         messages = f"Balances for your wallet address ({hide_wallet_address(user_public_key['public_key'])}):"
-        messages += f"\nToken Symbol : Token Balance : Total Token Value (USD)"
+
+        # Total portfolio value
+        try:
+            total_usd_value = total_usd_result.result.rows[0].get("Account_USD_Value", "N/A")
+        except (IndexError, KeyError) as e:
+            print(f"Error fetching total_usd_value: {e}")
+            total_usd_value = "N/A"
+
+        try:
+            total_sol_value = total_sol_result.result.rows[0].get("Account_SOL_Value", "N/A")
+        except (IndexError, KeyError) as e:
+            print(f"Error fetching total_sol_value: {e}")
+            total_sol_value = "N/A"
+
+        messages += f"\n\n<b>Total Portfolio Value:</b>\n\n"
+        messages += f"USD: ${total_usd_value:.2f}" if total_usd_value != "N/A" else "USD: N/A"
+        messages += f"\nSOL: {total_sol_value:.3f}" if total_sol_value != "N/A" else "\nSOL: N/A"
+
+        messages += f"\n\n<b>Token Symbol</b> : Token Balance : <b>Total Token Value (USD)</b>"
         for row in balances_data:
             if row['token_value']:
-                messages += f"\n{row['token_symbol']} : {float(row['token_balance']):.3f} : ${row['token_value']:.2f}"
+                messages += f"\n<b>{row['token_symbol']}</b> : {float(row['token_balance']):.3f} : <b>${row['token_value']:.2f}</b>"
             else:
-                messages += f"\n{row['token_symbol']} : {float(row['token_balance']):.3f} : N/A"
+                messages += f"\n<b>{row['token_symbol']}</b> : {float(row['token_balance']):.3f} : N/A"
 
         await fetching_message.delete()
-        await update.message.reply_text(messages)
+        await context.bot.send_message(chat_id=query.message.chat_id, text=messages, parse_mode=ParseMode.HTML)
     except Exception as e:
-        await update.message.reply_text(f"Error fetching balances: {e}")
-
-
-import matplotlib.pyplot as plt
-from matplotlib import rcParams
-
-# Set a different font
-rcParams['font.family'] = 'Arial'
+        await query.edit_message_text(f"Error fetching balances: {e}")
+    await show_menu(update, context)
 
 async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_public_key = mongo_client.bark.public_keys.find_one({"user_id": update.effective_user.id})
+    query = update.callback_query
+    await query.answer()
+    user_public_key = mongo_client.bark.public_keys.find_one({"user_id": query.from_user.id})
     if not user_public_key:
-        await update.message.reply_text("You have not saved your public key yet. Please save it with /save_public_key.")
+        await query.edit_message_text("You have not saved your public key yet. Please save it with /save_public_key.")
         return
 
-    query = QueryBase(
+    pnl_query = QueryBase(
         name="PnL Query",
-        query_id=3814999,  # Use the query ID provided
+        query_id=3852029,  # Use the query ID provided
         params=[
             QueryParameter(
                 name="Solana Wallet Address",
@@ -193,72 +283,52 @@ async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
     try:
-        result = dune_client.run_query(query=query, performance='medium')
-        rows = result.result.rows
-        if not rows:
-            await update.message.reply_text("No PnL data available.")
+        pnl_result = dune_client.run_query(query=pnl_query, performance='medium')
+        pnl_rows = pnl_result.result.rows
+        if not pnl_rows:
+            await query.edit_message_text("No PnL data available.")
             return
     except Exception as e:
-        await update.message.reply_text(f"Error fetching PnL data: {e}")
+        await query.edit_message_text(f"Error fetching PnL data: {e}")
         return
 
-    # Convert results to DataFrame
-    df = pd.DataFrame(rows)
-    df['pnl_usd'] = df['pnl_usd'].astype(float)
+    df_pnl = pd.DataFrame(pnl_rows)
+    df_pnl['total_pnl_usd'] = df_pnl['total_pnl_usd'].astype(float)
 
-    # Plot PnL Bar Chart
+    df_pnl = df_pnl.sort_values(by='total_pnl_usd', ascending=True)
+
     plt.figure(figsize=(10, 6))
-    plt.bar(df['token'], df['pnl_usd'], color='blue')
+    bars = plt.bar(df_pnl['token_symbol'], df_pnl['total_pnl_usd'], color=['red' if x < 0 else 'blue' for x in df_pnl['total_pnl_usd']])
     plt.xlabel('Token')
     plt.ylabel('PnL (USD)')
     plt.title('PnL for each Token')
     plt.xticks(rotation=45)
     plt.tight_layout()
 
-    # Save bar chart to a BytesIO object
-    bio_bar = BytesIO()
-    plt.savefig(bio_bar, format='png')
-    bio_bar.seek(0)
+    for bar in bars:
+        if bar.get_height() < 0:
+            bar.set_y(bar.get_height())
+
+    bio = BytesIO()
+    plt.savefig(bio, format='png')
+    bio.seek(0)
     plt.close()
 
-    # Plot PnL Line Graph
-    plt.figure(figsize=(10, 6))
-    plt.plot(df['token'], df['pnl_usd'], marker='o', linestyle='-', color='blue')
-    plt.xlabel('Token')
-    plt.ylabel('PnL (USD)')
-    plt.title('PnL for each Token')
-    plt.xticks(rotation=45)
-    plt.tight_layout()
+    total_pnl_usd = df_pnl['total_pnl_usd'].sum()
+    pnl_status = "+" if total_pnl_usd > 0 else "-"
 
-    # Save line graph to a BytesIO object
-    bio_line = BytesIO()
-    plt.savefig(bio_line, format='png')
-    bio_line.seek(0)
-    plt.close()
+    await context.bot.send_photo(chat_id=query.message.chat_id, photo=bio, caption=f"PnL for each Token\n\nTotal PnL (USD): {pnl_status}${abs(total_pnl_usd):.2f}")
 
-    # Calculate and plot Total Portfolio PnL Line Graph
-    df_total_pnl = df[['token', 'pnl_usd']].copy()
-    df_total_pnl['cumulative_pnl_usd'] = df_total_pnl['pnl_usd'].cumsum()
+    pnl_message = "<b>Detailed PnL Data:</b>\n<hr>\n"
+    for _, row in df_pnl.iterrows():
+        pnl_message += f"<b>{row['token_symbol']}</b>: {row['total_pnl_usd']:.2f} $\n"
 
-    plt.figure(figsize=(10, 6))
-    plt.plot(df_total_pnl['token'], df_total_pnl['cumulative_pnl_usd'], marker='o', linestyle='-', color='green')
-    plt.xlabel('Token')
-    plt.ylabel('Cumulative PnL (USD)')
-    plt.title('Total Portfolio PnL Over Time')
-    plt.xticks(rotation=45)
-    plt.tight_layout()
+    await context.bot.send_message(chat_id=query.message.chat_id, text=pnl_message, parse_mode=ParseMode.HTML)
+    await show_menu(update, context)
 
-    # Save total portfolio PnL line graph to a BytesIO object
-    bio_total_pnl = BytesIO()
-    plt.savefig(bio_total_pnl, format='png')
-    bio_total_pnl.seek(0)
-    plt.close()
-
-    # Send the plots to the user
-    await update.message.reply_photo(photo=bio_bar, caption="PnL for each Token (Bar Chart)")
-    await update.message.reply_photo(photo=bio_line, caption="PnL for each Token (Line Graph)")
-    await update.message.reply_photo(photo=bio_total_pnl, caption="Total Portfolio PnL Over Time (Line Graph)")
-
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("Action cancelled.")
+    return ConversationHandler.END
 
 def main() -> None:
     application = Application.builder().token(os.getenv("TG_TOKEN")).build()
@@ -289,16 +359,15 @@ def main() -> None:
 
     application.add_handler(start_conv_handler)
     application.add_handler(save_key_conv_handler)
-    application.add_handler(CommandHandler("get_public_key", get_public_key))
-    application.add_handler(CommandHandler("remove_public_key", remove_public_key))
-    application.add_handler(CommandHandler("total_volume", get_total_volume))
-    application.add_handler(CommandHandler("latest_volumes", get_latest_volumes))
-    application.add_handler(CommandHandler("balances", get_balances))
-    application.add_handler(CommandHandler("pnl_graph", get_pnl_graph))  # Add this line
+    application.add_handler(CallbackQueryHandler(get_public_key, pattern='get_public_key'))
+    application.add_handler(CallbackQueryHandler(remove_public_key, pattern='remove_public_key'))
+    application.add_handler(CallbackQueryHandler(get_total_volume, pattern='total_volume'))
+    application.add_handler(CallbackQueryHandler(get_latest_volumes, pattern='latest_volumes'))
+    application.add_handler(CallbackQueryHandler(get_balances, pattern='balances'))
+    application.add_handler(CallbackQueryHandler(get_pnl_graph, pattern='pnl_graph'))
     application.add_handler(CommandHandler("hello", hello))
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
-
 
 if __name__ == "__main__":
     main()
