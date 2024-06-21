@@ -3,11 +3,8 @@ from io import BytesIO
 from typing import Optional
 
 import dotenv
-import asyncio
 import matplotlib.pyplot as plt
 import pandas as pd
-import matplotlib.pyplot as plt
-from matplotlib import rcParams
 from dune_client.client import DuneClient
 from dune_client.query import QueryBase
 from dune_client.types import QueryParameter, ParameterType
@@ -114,7 +111,7 @@ async def get_balances(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     query = QueryBase(
         name="Balances Query",
-        query_id=3808045,  # Use the correct query ID for the provided query
+        query_id=3808006,
         params=[
             QueryParameter(
                 name="Solana Wallet Address",
@@ -128,16 +125,6 @@ async def get_balances(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         fetching_message = await update.message.reply_text("Please wait while I fetch your balances.")
         result = dune_client.run_query(query=query, performance='medium')
         balances_data = result.result.rows
-
-        if not balances_data:
-            await update.message.reply_text("No balance data available.")
-            return
-
-        # Convert results to DataFrame
-        df = pd.DataFrame(balances_data)
-
-        # Calculate the total portfolio value
-        total_value = df['Account_USD_Value'].sum()
 
         # Create a pie chart
         tokens = [row['token_symbol'][:6] for row in balances_data]  # truncate token symbols to 6 characters
@@ -167,20 +154,22 @@ async def get_balances(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_photo(photo=buf)
 
         # Send the text message
-        message = f"Total portfolio value for your wallet address ({hide_wallet_address(user_public_key['public_key'])}) is: ${total_value:.2f}\n\n"
-        message += f"Balances for your wallet address ({hide_wallet_address(user_public_key['public_key'])}):"
-        message += f"\nToken Symbol : Token Balance : Total Token Value (USD)"
+        messages = f"Balances for your wallet address ({hide_wallet_address(user_public_key['public_key'])}):"
+        messages += f"\nToken Symbol : Token Balance : Total Token Value (USD)"
         for row in balances_data:
             if row['token_value']:
-                message += f"\n{row['token_symbol']} : {float(row['token_balance']):.3f} : ${row['token_value']:.2f}"
+                messages += f"\n{row['token_symbol']} : {float(row['token_balance']):.3f} : ${row['token_value']:.2f}"
             else:
-                message += f"\n{row['token_symbol']} : {float(row['token_balance']):.3f} : N/A"
+                messages += f"\n{row['token_symbol']} : {float(row['token_balance']):.3f} : N/A"
 
         await fetching_message.delete()
-        await update.message.reply_text(message)
+        await update.message.reply_text(messages)
     except Exception as e:
         await update.message.reply_text(f"Error fetching balances: {e}")
 
+
+import matplotlib.pyplot as plt
+from matplotlib import rcParams
 
 # Set a different font
 rcParams['font.family'] = 'Arial'
@@ -215,17 +204,6 @@ async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     # Convert results to DataFrame
     df = pd.DataFrame(rows)
-
-    # Inspect the columns to see what is available
-    print("Available columns:", df.columns)
-
-    # Assuming the correct column name might be different, inspect and modify as needed
-    block_time_column = 'block_time'  # Adjust this based on the actual column name
-    if block_time_column not in df.columns:
-        await update.message.reply_text(f"Error: Expected column '{block_time_column}' not found in the data.")
-        return
-
-    df[block_time_column] = pd.to_datetime(df[block_time_column])
     df['pnl_usd'] = df['pnl_usd'].astype(float)
 
     # Plot PnL Bar Chart
@@ -243,52 +221,28 @@ async def get_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     bio_bar.seek(0)
     plt.close()
 
-    # Send the plots to the user
-    await update.message.reply_photo(photo=bio_bar, caption="PnL for each Token (Bar Chart)")
-
-async def get_total_portfolio_pnl_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_public_key = mongo_client.bark.public_keys.find_one({"user_id": update.effective_user.id})
-    if not user_public_key:
-        await update.message.reply_text("You have not saved your public key yet. Please save it with /save_public_key.")
-        return
-
-    query_id = 3815570  # Use the correct query ID for the provided query
-
-    query = QueryBase(
-        name="Total Portfolio PnL Query",
-        query_id=query_id,
-        params=[
-            QueryParameter(
-                name="Solana Wallet Address",
-                value=user_public_key["public_key"],
-                parameter_type=ParameterType.TEXT
-            ),
-        ]
-    )
-
-    try:
-        result = dune_client.run_query(query=query, performance='medium')
-        rows = result.result.rows
-        if not rows:
-            await update.message.reply_text("No PnL data available.")
-            return
-    except Exception as e:
-        await update.message.reply_text(f"Error fetching total portfolio PnL data: {e}")
-        return
-
-    # Convert results to DataFrame
-    df = pd.DataFrame(rows)
-    df['block_time'] = pd.to_datetime(df['block_time'])
-    df['Total_PnL'] = df['Total_PnL'].astype(float)
-
-    # Calculate cumulative PnL
-    df.sort_values('block_time', inplace=True)
-    df['cumulative_pnl_usd'] = df['Total_PnL'].cumsum()
-
-    # Plot Total Portfolio PnL vs Time Line Graph
+    # Plot PnL Line Graph
     plt.figure(figsize=(10, 6))
-    plt.plot(df['block_time'], df['cumulative_pnl_usd'], marker='o', linestyle='-', color='green')
-    plt.xlabel('Time')
+    plt.plot(df['token'], df['pnl_usd'], marker='o', linestyle='-', color='blue')
+    plt.xlabel('Token')
+    plt.ylabel('PnL (USD)')
+    plt.title('PnL for each Token')
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+
+    # Save line graph to a BytesIO object
+    bio_line = BytesIO()
+    plt.savefig(bio_line, format='png')
+    bio_line.seek(0)
+    plt.close()
+
+    # Calculate and plot Total Portfolio PnL Line Graph
+    df_total_pnl = df[['token', 'pnl_usd']].copy()
+    df_total_pnl['cumulative_pnl_usd'] = df_total_pnl['pnl_usd'].cumsum()
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(df_total_pnl['token'], df_total_pnl['cumulative_pnl_usd'], marker='o', linestyle='-', color='green')
+    plt.xlabel('Token')
     plt.ylabel('Cumulative PnL (USD)')
     plt.title('Total Portfolio PnL Over Time')
     plt.xticks(rotation=45)
@@ -300,77 +254,14 @@ async def get_total_portfolio_pnl_graph(update: Update, context: ContextTypes.DE
     bio_total_pnl.seek(0)
     plt.close()
 
-    # Send the plot to the user
+    # Send the plots to the user
+    await update.message.reply_photo(photo=bio_bar, caption="PnL for each Token (Bar Chart)")
+    await update.message.reply_photo(photo=bio_line, caption="PnL for each Token (Line Graph)")
     await update.message.reply_photo(photo=bio_total_pnl, caption="Total Portfolio PnL Over Time (Line Graph)")
 
-TOKEN, PRICE = range(2)
-
-async def set_alert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text(
-        "Please enter the token symbol for which you want to set an alert:"
-    )
-    return TOKEN
-
-async def token_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['token'] = update.message.text
-    await update.message.reply_text("Please enter the target price for the alert:")
-    return PRICE
-
-async def price_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    try:
-        target_price = float(update.message.text)
-        context.user_data['price'] = target_price
-        user_id = update.effective_user.id
-
-        # Save the alert to a database or in-memory data structure
-        mongo_client.bark.alerts.insert_one(
-            {"user_id": user_id, "token": context.user_data['token'], "price": target_price}
-        )
-
-        await update.message.reply_text(f"Alert set for {context.user_data['token']} at price ${target_price:.2f}.")
-        return ConversationHandler.END
-    except ValueError:
-        await update.message.reply_text("Invalid price. Please enter a valid number:")
-        return PRICE
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Alert setup cancelled.")
-    return ConversationHandler.END
-
-async def check_alerts():
-    while True:
-        alerts = mongo_client.bark.alerts.find()
-        for alert in alerts:
-            token_prices = await check_token_prices(alert['user_id'])  # Function to fetch current token prices
-            for token in token_prices:
-                if token['token_symbol'] == alert['token'] and float(token['token_price_usd']) >= alert['price']:
-                    await send_alert(alert['user_id'], token['token_symbol'], float(token['token_price_usd']), alert['price'])
-        await asyncio.sleep(3600)  # Check every hour
-
-async def send_alert(user_id: int, token_symbol: str, current_price: float, target_price: float) -> None:
-    application = Application.builder().token(os.getenv("TG_TOKEN")).build()
-    await application.bot.send_message(
-        chat_id=user_id,
-        text=f"Alert: {token_symbol} has reached the target price of ${target_price:.2f}. Current price: ${current_price:.2f}"
-    )
-
-
-def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    update.message.reply_text("Cancelled.")
-    return ConversationHandler.END
 
 def main() -> None:
     application = Application.builder().token(os.getenv("TG_TOKEN")).build()
-
-    set_alert_handler = ConversationHandler(
-        entry_points=[CommandHandler("set_alert", set_alert)],
-        states={
-            TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, token_input)],
-            PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, price_input)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-
 
     start_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
@@ -403,13 +294,8 @@ def main() -> None:
     application.add_handler(CommandHandler("total_volume", get_total_volume))
     application.add_handler(CommandHandler("latest_volumes", get_latest_volumes))
     application.add_handler(CommandHandler("balances", get_balances))
-    application.add_handler(CommandHandler("pnl_graph", get_pnl_graph))  
-    application.add_handler(CommandHandler("total_portfolio_pnl_graph", get_total_portfolio_pnl_graph))
-
-
+    application.add_handler(CommandHandler("pnl_graph", get_pnl_graph))  # Add this line
     application.add_handler(CommandHandler("hello", hello))
-    asyncio.create_task(check_alerts())
-
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
