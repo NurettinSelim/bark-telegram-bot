@@ -6,6 +6,3 @@ total_volume - Get total volume
 latest_volumes - Get latest volumes
 balances - Get balances of your wallet
 pnl_graph - Get PNL graph of your wallet
-wallet_summary - Get Wallet Summary of your wallet
-allocation - Get Allocation   
-pnl_details - Get PNL details of your wallet  
